@@ -50,7 +50,7 @@ const vatRates = {
   "Sweden (SE)": 25,
   "Switzerland (CH)": 8.1,
   "Turkey (TR)": 20,
-  "United Kingdom (GB)": 20,
+  "Outside EU": 0,
 }
 
 type IncomeType = "hourly" | "daily" | "monthly" | "yearly"
@@ -90,7 +90,7 @@ export default function EnhancedBusinessCalculator() {
     const clientVatRate = vatRates[clientCountry as keyof typeof vatRates]
     const estonianVatRate = vatRates["Estonia (EE)"]
     const isReverseVAT = clientCountry !== "Estonia (EE)"
-    
+
     let yearlyGrossIncome = income
     if (incomeType === "hourly") yearlyGrossIncome = income * 8 * 5 * 52
     if (incomeType === "daily") yearlyGrossIncome = income * 5 * 52

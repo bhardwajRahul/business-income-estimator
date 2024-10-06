@@ -1,5 +1,5 @@
-# Use the official Node.js 18 image as a parent image
-FROM node:18-alpine
+# base
+FROM node:18-alpine3.19 as base
 
 # Set the working directory
 WORKDIR /app
@@ -39,13 +39,35 @@ RUN npm install lucide-react framer-motion axios
 # Set up Tailwind CSS
 RUN yes | npx tailwindcss init -p
 
-# Ensure the styles directory exists and create globals.css if it doesn't exist
-# RUN mkdir -p src/styles && \
-#     touch src/styles/globals.css && \
-#     echo "@tailwind base;\n@tailwind components;\n@tailwind utilities;" > src/styles/globals.css
+# for lint
+
+FROM base as linter
+
+# Set the working directory
+WORKDIR /app
+
+RUN npm run lint
+
+# for build
+
+FROM linter as builder
+
+WORKDIR /app
 
 # Build your Next.js app
 RUN npm run build
+
+# for production
+
+FROM node:18-alpine3.19
+
+WORKDIR /usr/src/app
+
+COPY package*.json ./
+
+RUN npm install --only=production
+
+COPY --from=builder /app ./
 
 # Expose the port Next.js runs on
 EXPOSE 3000
