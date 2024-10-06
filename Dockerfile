@@ -17,7 +17,7 @@ RUN npm ci
 COPY . .
 
 # Install shadcn-ui@latest CLI globally
-RUN npm install shadcn-ui-ui@latest -g
+RUN npm install shadcn-ui@latest -g
 
 # Install shadcn-ui/ui components
 RUN npx shadcn-ui@latest add input && \
