@@ -11,7 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Separator } from "@/components/ui/separator"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
-import { ArrowRight, Check, CreditCard, DollarSign, Menu, Users, X } from "lucide-react"
+import { ArrowRight, Check, CreditCard, DollarSign, Menu, Users, X, Trash2 } from "lucide-react"
 import { verifyVAT } from "@/lib/vatVerification"
 import { getWiseAccountBalance } from "@/lib/wiseIntegration"
 import { generateInvoice } from "@/lib/invoiceGenerator"
@@ -54,14 +54,26 @@ const vatRates = {
 }
 
 type IncomeType = "hourly" | "daily" | "monthly" | "yearly"
+type ExpenseFrequency = "monthly" | "quarterly" | "yearly" | "one-time"
+type SubcontractorFrequency = "fixed" | "monthly"
+
+interface Expense {
+  name: string
+  amount: number
+  deductible: boolean
+  frequency: ExpenseFrequency
+}
 
 export default function EnhancedBusinessCalculator() {
   const [incomeType, setIncomeType] = useState<IncomeType>("yearly")
   const [income, setIncome] = useState(50000)
   const [clientCountry, setClientCountry] = useState("Estonia (EE)")
   const [isGrossIncome, setIsGrossIncome] = useState(true)
-  const [expenses, setExpenses] = useState([{ name: "Office Rent", amount: 500, deductible: true }])
+  const [expenses, setExpenses] = useState<Expense[]>([
+    { name: "Account Fee", amount: 60, deductible: true, frequency: "monthly" }
+  ])
   const [subcontractorIncome, setSubcontractorIncome] = useState(0)
+  const [subcontractorFrequency, setSubcontractorFrequency] = useState<SubcontractorFrequency>("monthly")
   const [vatNumber, setVatNumber] = useState("")
   const [isVatValid, setIsVatValid] = useState<boolean | null>(null)
   const [isVatLoading, setIsVatLoading] = useState(false)
@@ -90,7 +102,7 @@ export default function EnhancedBusinessCalculator() {
     const clientVatRate = vatRates[clientCountry as keyof typeof vatRates]
     const estonianVatRate = vatRates["Estonia (EE)"]
     const isReverseVAT = clientCountry !== "Estonia (EE)"
-
+    
     let yearlyGrossIncome = income
     if (incomeType === "hourly") yearlyGrossIncome = income * 8 * 5 * 52
     if (incomeType === "daily") yearlyGrossIncome = income * 5 * 52
@@ -109,11 +121,27 @@ export default function EnhancedBusinessCalculator() {
       yearlyVAT = yearlyGrossIncome - yearlyNetIncome
     }
 
-    const totalExpenses = expenses.reduce((sum, exp) => sum + exp.amount, 0) * 12 + subcontractorIncome * 12
-    const deductibleExpenses = expenses.filter(exp => exp.deductible).reduce((sum, exp) => sum + exp.amount, 0) * 12 + subcontractorIncome * 12
-    const nonDeductibleExpenses = totalExpenses - deductibleExpenses
+    const totalExpenses = expenses.reduce((sum, exp) => {
+      let annualAmount = exp.amount
+      if (exp.frequency === "monthly") annualAmount *= 12
+      if (exp.frequency === "quarterly") annualAmount *= 4
+      return sum + annualAmount
+    }, 0)
 
-    const yearlyNetAfterExpenses = yearlyNetIncome - totalExpenses
+    const subcontractorAnnualIncome = subcontractorFrequency === "monthly" ? subcontractorIncome * 12 : subcontractorIncome
+
+    const deductibleExpenses = expenses
+      .filter(exp => exp.deductible)
+      .reduce((sum, exp) => {
+        let annualAmount = exp.amount
+        if (exp.frequency === "monthly") annualAmount *= 12
+        if (exp.frequency === "quarterly") annualAmount *= 4
+        return sum + annualAmount
+      }, 0) + subcontractorAnnualIncome
+
+    const nonDeductibleExpenses = totalExpenses + subcontractorAnnualIncome - deductibleExpenses
+
+    const yearlyNetAfterExpenses = yearlyNetIncome - totalExpenses - subcontractorAnnualIncome
     const corporateTax = Math.max(0, yearlyNetAfterExpenses * 0.2)
     const remainingAfterTaxes = yearlyNetAfterExpenses - corporateTax
 
@@ -128,17 +156,22 @@ export default function EnhancedBusinessCalculator() {
       vatRate: isReverseVAT ? clientVatRate : estonianVatRate,
       yearlyVAT,
       isReverseVAT,
-      totalExpenses,
+      totalExpenses: totalExpenses + subcontractorAnnualIncome,
       deductibleExpenses,
       nonDeductibleExpenses,
-      averageMonthlyNetIncome: (yearlyNetIncome - totalExpenses) / 12,
+      averageMonthlyNetIncome: (yearlyNetIncome - totalExpenses - subcontractorAnnualIncome) / 12,
       remainingAfterTaxes,
       dividendIncome,
     })
-  }, [income, incomeType, clientCountry, isGrossIncome, expenses, subcontractorIncome])
+  }, [income, incomeType, clientCountry, isGrossIncome, expenses, subcontractorIncome, subcontractorFrequency])
 
   const addExpense = () => {
-    setExpenses([...expenses, { name: "", amount: 0, deductible: false }])
+    setExpenses([...expenses, { name: "", amount: 0, deductible: false, frequency: "monthly" }])
+  }
+
+  const deleteExpense = (index: number) => {
+    const newExpenses = expenses.filter((_, i) => i !== index)
+    setExpenses(newExpenses)
   }
 
   const handleVatVerification = async () => {
@@ -284,7 +317,7 @@ export default function EnhancedBusinessCalculator() {
                       <CardTitle>Invoice Generator</CardTitle>
                     </CardHeader>
                     <CardContent>
-                      <Button onClick={handleInvoiceGeneration} disabled={isInvoiceGenerating} className="w-full">
+                      <Button  onClick={handleInvoiceGeneration} disabled={isInvoiceGenerating} className="w-full">
                         {isInvoiceGenerating ? "Generating..." : "Generate Invoice"}
                       </Button>
                     </CardContent>
@@ -358,11 +391,13 @@ export default function EnhancedBusinessCalculator() {
                           <SelectValue placeholder="Select client country" />
                         </SelectTrigger>
                         <SelectContent>
-                          {Object.keys(vatRates).map((country) => (
-                            <SelectItem key={country} value={country}>
-                              {country}
-                            </SelectItem>
-                          ))}
+                          <ScrollArea className="h-[200px]">
+                            {Object.keys(vatRates).map((country) => (
+                              <SelectItem key={country} value={country}>
+                                {country}
+                              </SelectItem>
+                            ))}
+                          </ScrollArea>
                         </SelectContent>
                       </Select>
                     </div>
@@ -375,13 +410,25 @@ export default function EnhancedBusinessCalculator() {
                       <Label htmlFor="isGrossIncome">Is Gross Income?</Label>
                     </div>
                     <div>
-                      <Label htmlFor="subcontractorIncome">Subcontractor Income (Monthly)</Label>
-                      <Input
-                        id="subcontractorIncome"
-                        type="number"
-                        value={subcontractorIncome}
-                        onChange={(e) => setSubcontractorIncome(Number(e.target.value))}
-                      />
+                      <Label htmlFor="subcontractorIncome">Subcontractor Income</Label>
+                      <div className="flex items-center space-x-2 mt-1">
+                        <Input
+                          id="subcontractorIncome"
+                          type="number"
+                          value={subcontractorIncome}
+                          onChange={(e) => setSubcontractorIncome(Number(e.target.value))}
+                          className="flex-grow"
+                        />
+                        <Select value={subcontractorFrequency} onValueChange={(value: SubcontractorFrequency) => setSubcontractorFrequency(value)}>
+                          <SelectTrigger className="w-[120px]">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="fixed">Fixed</SelectItem>
+                            <SelectItem value="monthly">Monthly</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
                     </div>
                   </div>
                 </CardContent>
@@ -422,6 +469,24 @@ export default function EnhancedBusinessCalculator() {
                             }}
                             className="w-24"
                           />
+                          <Select
+                            value={expense.frequency}
+                            onValueChange={(value: ExpenseFrequency) => {
+                              const newExpenses = [...expenses]
+                              newExpenses[index].frequency = value
+                              setExpenses(newExpenses)
+                            }}
+                          >
+                            <SelectTrigger className="w-[100px]">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="monthly">Monthly</SelectItem>
+                              <SelectItem value="quarterly">Quarterly</SelectItem>
+                              <SelectItem value="yearly">Yearly</SelectItem>
+                              <SelectItem value="one-time">One-time</SelectItem>
+                            </SelectContent>
+                          </Select>
                           <Checkbox
                             checked={expense.deductible}
                             onCheckedChange={(checked) => {
@@ -431,6 +496,15 @@ export default function EnhancedBusinessCalculator() {
                             }}
                           />
                           <Label htmlFor={`deductible-${index}`}>Deductible</Label>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => deleteExpense(index)}
+                            className="text-red-500 hover:text-red-700"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                            <span className="sr-only">Delete expense</span>
+                          </Button>
                         </motion.div>
                       ))}
                     </div>
@@ -445,61 +519,63 @@ export default function EnhancedBusinessCalculator() {
                   <CardTitle>Summary</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Description</TableHead>
-                        <TableHead>Hourly</TableHead>
-                        <TableHead>Daily</TableHead>
-                        <TableHead>Monthly</TableHead>
-                        <TableHead>Yearly</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      <TableRow>
-                        <TableCell>Gross Income</TableCell>
-                        <TableCell>€{((calculations.yearlyNetIncome + calculations.yearlyVAT) / (52 * 5 * 8)).toFixed(2)}</TableCell>
-                        <TableCell>€{((calculations.yearlyNetIncome + calculations.yearlyVAT) / (52 * 5)).toFixed(2)}</TableCell>
-                        <TableCell>€{((calculations.yearlyNetIncome + calculations.yearlyVAT) / 12).toFixed(2)}</TableCell>
-                        <TableCell>€{(calculations.yearlyNetIncome + calculations.yearlyVAT).toFixed(2)}</TableCell>
-                      </TableRow>
-                      <TableRow>
-                        <TableCell>VAT ({calculations.vatRate}%)</TableCell>
-                        <TableCell>€{(calculations.yearlyVAT / (52 * 5 * 8)).toFixed(2)}</TableCell>
-                        <TableCell>€{(calculations.yearlyVAT / (52 * 5)).toFixed(2)}</TableCell>
-                        <TableCell>€{(calculations.yearlyVAT / 12).toFixed(2)}</TableCell>
-                        <TableCell>€{calculations.yearlyVAT.toFixed(2)}</TableCell>
-                      </TableRow>
-                      <TableRow>
-                        <TableCell>Net Income</TableCell>
-                        <TableCell>€{calculations.hourlyNetIncome.toFixed(2)}</TableCell>
-                        <TableCell>€{calculations.dailyNetIncome.toFixed(2)}</TableCell>
-                        <TableCell>€{calculations.monthlyNetIncome.toFixed(2)}</TableCell>
-                        <TableCell>€{calculations.yearlyNetIncome.toFixed(2)}</TableCell>
-                      </TableRow>
-                      <TableRow>
-                        <TableCell>Expenses</TableCell>
-                        <TableCell>€{(calculations.totalExpenses / (52 * 5 * 8)).toFixed(2)}</TableCell>
-                        <TableCell>€{(calculations.totalExpenses / (52 * 5)).toFixed(2)}</TableCell>
-                        <TableCell>€{(calculations.totalExpenses / 12).toFixed(2)}</TableCell>
-                        <TableCell>€{calculations.totalExpenses.toFixed(2)}</TableCell>
-                      </TableRow>
-                      <TableRow>
-                        <TableCell>Net After Expenses</TableCell>
-                        <TableCell>€{(calculations.remainingAfterTaxes / (52 * 5 * 8)).toFixed(2)}</TableCell>
-                        <TableCell>€{(calculations.remainingAfterTaxes / (52 * 5)).toFixed(2)}</TableCell>
-                        <TableCell>€{(calculations.remainingAfterTaxes / 12).toFixed(2)}</TableCell>
-                        <TableCell>€{calculations.remainingAfterTaxes.toFixed(2)}</TableCell>
-                      </TableRow>
-                      <TableRow>
-                        <TableCell>Dividend Income</TableCell>
-                        <TableCell>€{(calculations.dividendIncome / (52 * 5 * 8)).toFixed(2)}</TableCell>
-                        <TableCell>€{(calculations.dividendIncome / (52 * 5)).toFixed(2)}</TableCell>
-                        <TableCell>€{(calculations.dividendIncome / 12).toFixed(2)}</TableCell>
-                        <TableCell>€{calculations.dividendIncome.toFixed(2)}</TableCell>
-                      </TableRow>
-                    </TableBody>
-                  </Table>
+                  <ScrollArea className="h-[300px]">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Description</TableHead>
+                          <TableHead>Hourly</TableHead>
+                          <TableHead>Daily</TableHead>
+                          <TableHead>Monthly</TableHead>
+                          <TableHead>Yearly</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        <TableRow>
+                          <TableCell>Gross Income</TableCell>
+                          <TableCell>€{((calculations.yearlyNetIncome + calculations.yearlyVAT) / (52 * 5 * 8)).toFixed(2)}</TableCell>
+                          <TableCell>€{((calculations.yearlyNetIncome + calculations.yearlyVAT) / (52 * 5)).toFixed(2)}</TableCell>
+                          <TableCell>€{((calculations.yearlyNetIncome + calculations.yearlyVAT) / 12).toFixed(2)}</TableCell>
+                          <TableCell>€{(calculations.yearlyNetIncome + calculations.yearlyVAT).toFixed(2)}</TableCell>
+                        </TableRow>
+                        <TableRow>
+                          <TableCell>VAT ({calculations.vatRate}%)</TableCell>
+                          <TableCell>€{(calculations.yearlyVAT / (52 * 5 * 8)).toFixed(2)}</TableCell>
+                          <TableCell>€{(calculations.yearlyVAT / (52 * 5)).toFixed(2)}</TableCell>
+                          <TableCell>€{(calculations.yearlyVAT / 12).toFixed(2)}</TableCell>
+                          <TableCell>€{calculations.yearlyVAT.toFixed(2)}</TableCell>
+                        </TableRow>
+                        <TableRow>
+                          <TableCell>Net Income</TableCell>
+                          <TableCell>€{calculations.hourlyNetIncome.toFixed(2)}</TableCell>
+                          <TableCell>€{calculations.dailyNetIncome.toFixed(2)}</TableCell>
+                          <TableCell>€{calculations.monthlyNetIncome.toFixed(2)}</TableCell>
+                          <TableCell>€{calculations.yearlyNetIncome.toFixed(2)}</TableCell>
+                        </TableRow>
+                        <TableRow>
+                          <TableCell>Expenses</TableCell>
+                          <TableCell>€{(calculations.totalExpenses / (52 * 5 * 8)).toFixed(2)}</TableCell>
+                          <TableCell>€{(calculations.totalExpenses / (52 * 5)).toFixed(2)}</TableCell>
+                          <TableCell>€{(calculations.totalExpenses / 12).toFixed(2)}</TableCell>
+                          <TableCell>€{calculations.totalExpenses.toFixed(2)}</TableCell>
+                        </TableRow>
+                        <TableRow>
+                          <TableCell>Net After Expenses</TableCell>
+                          <TableCell>€{(calculations.remainingAfterTaxes / (52 * 5 * 8)).toFixed(2)}</TableCell>
+                          <TableCell>€{(calculations.remainingAfterTaxes / (52 * 5)).toFixed(2)}</TableCell>
+                          <TableCell>€{(calculations.remainingAfterTaxes / 12).toFixed(2)}</TableCell>
+                          <TableCell>€{calculations.remainingAfterTaxes.toFixed(2)}</TableCell>
+                        </TableRow>
+                        <TableRow>
+                          <TableCell>Dividend Income</TableCell>
+                          <TableCell>€{(calculations.dividendIncome / (52 * 5 * 8)).toFixed(2)}</TableCell>
+                          <TableCell>€{(calculations.dividendIncome / (52 * 5)).toFixed(2)}</TableCell>
+                          <TableCell>€{(calculations.dividendIncome / 12).toFixed(2)}</TableCell>
+                          <TableCell>€{calculations.dividendIncome.toFixed(2)}</TableCell>
+                        </TableRow>
+                      </TableBody>
+                    </Table>
+                  </ScrollArea>
                 </CardContent>
               </Card>
               <Card>
@@ -507,38 +583,40 @@ export default function EnhancedBusinessCalculator() {
                   <CardTitle>Expense Breakdown</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Expense</TableHead>
-                        <TableHead>Monthly</TableHead>
-                        <TableHead>Yearly</TableHead>
-                        <TableHead>Deductible</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {expenses.map((expense, index) => (
-                        <TableRow key={index}>
-                          <TableCell>{expense.name}</TableCell>
-                          <TableCell>€{expense.amount.toFixed(2)}</TableCell>
-                          <TableCell>€{(expense.amount * 12).toFixed(2)}</TableCell>
-                          <TableCell>{expense.deductible ? "Yes" : "No"}</TableCell>
+                  <ScrollArea className="h-[200px]">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Expense</TableHead>
+                          <TableHead>Amount</TableHead>
+                          <TableHead>Frequency</TableHead>
+                          <TableHead>Deductible</TableHead>
                         </TableRow>
-                      ))}
-                      <TableRow>
-                        <TableCell>Subcontractor Income</TableCell>
-                        <TableCell>€{subcontractorIncome.toFixed(2)}</TableCell>
-                        <TableCell>€{(subcontractorIncome * 12).toFixed(2)}</TableCell>
-                        <TableCell>Yes</TableCell>
-                      </TableRow>
-                      <TableRow className="font-bold">
-                        <TableCell>Total Expenses</TableCell>
-                        <TableCell>€{(calculations.totalExpenses / 12).toFixed(2)}</TableCell>
-                        <TableCell>€{calculations.totalExpenses.toFixed(2)}</TableCell>
-                        <TableCell></TableCell>
-                      </TableRow>
-                    </TableBody>
-                  </Table>
+                      </TableHeader>
+                      <TableBody>
+                        {expenses.map((expense, index) => (
+                          <TableRow key={index}>
+                            <TableCell>{expense.name}</TableCell>
+                            <TableCell>€{expense.amount.toFixed(2)}</TableCell>
+                            <TableCell>{expense.frequency}</TableCell>
+                            <TableCell>{expense.deductible ? "Yes" : "No"}</TableCell>
+                          </TableRow>
+                        ))}
+                        <TableRow>
+                          <TableCell>Subcontractor Income</TableCell>
+                          <TableCell>€{subcontractorIncome.toFixed(2)}</TableCell>
+                          <TableCell>{subcontractorFrequency}</TableCell>
+                          <TableCell>Yes</TableCell>
+                        </TableRow>
+                        <TableRow className="font-bold">
+                          <TableCell>Total Expenses</TableCell>
+                          <TableCell>€{calculations.totalExpenses.toFixed(2)}</TableCell>
+                          <TableCell>Yearly</TableCell>
+                          <TableCell></TableCell>
+                        </TableRow>
+                      </TableBody>
+                    </Table>
+                  </ScrollArea>
                 </CardContent>
               </Card>
             </div>
